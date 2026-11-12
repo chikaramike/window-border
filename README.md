@@ -87,6 +87,15 @@ To make outlines thicker — or make the active window stand out — create
 Values are capped at 20. Extra thickness grows outward from the window edge, so
 it never covers window content. Pick **Reload Colors** to apply changes.
 
+To give an app's border a soft glow, add a `glow` map of app name to glow
+radius in points (capped at 30). The glow stays outside the window:
+
+```json
+{
+  "glow": { "Hermes": 10 }
+}
+```
+
 ## How it works
 
 - `CGWindowList` gives the on-screen windows, their bounds, and owning app.
