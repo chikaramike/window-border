@@ -11,6 +11,7 @@
 
 static const CGFloat kDefaultLineWidth = 1.0;
 static const CGFloat kMaxLineWidth = 20.0;
+static const CGFloat kMaxGlow = 30.0;
 static const CGFloat kCornerRadius = 10.0;
 static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
 
@@ -23,6 +24,7 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
 @interface BorderView : NSView
 @property(nonatomic, strong) NSColor *color;
 @property(nonatomic) CGFloat lineWidth;
+@property(nonatomic) CGFloat glow; // blur radius of the halo; 0 = none
 @end
 
 @implementation BorderView
@@ -30,14 +32,38 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
 - (void)drawRect:(NSRect)dirtyRect {
     [[NSColor clearColor] set];
     NSRectFill(self.bounds);
+    NSColor *color = self.color ?: [NSColor systemRedColor];
     CGFloat lw = self.lineWidth > 0 ? self.lineWidth : kDefaultLineWidth;
-    CGFloat radius = kCornerRadius + OutsetForWidth(lw);
-    NSRect r = NSInsetRect(self.bounds, lw / 2.0, lw / 2.0);
+    CGFloat outset = OutsetForWidth(lw);
+    CGFloat radius = kCornerRadius + outset;
+    // The overlay is padded by `glow` on every side so the halo isn't clipped.
+    NSRect r = NSInsetRect(self.bounds, self.glow + lw / 2.0, self.glow + lw / 2.0);
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:r
                                                         xRadius:radius
                                                         yRadius:radius];
     [path setLineWidth:lw];
-    [(self.color ?: [NSColor systemRedColor]) set];
+    [color set];
+
+    if (self.glow > 0) {
+        [NSGraphicsContext saveGraphicsState];
+        // Keep the halo outside the window so it never dims the app's content.
+        NSRect inner = NSInsetRect(self.bounds, self.glow + outset + kDefaultLineWidth,
+                                   self.glow + outset + kDefaultLineWidth);
+        NSBezierPath *clip = [NSBezierPath bezierPathWithRect:self.bounds];
+        [clip appendBezierPath:[NSBezierPath bezierPathWithRoundedRect:inner
+                                                               xRadius:kCornerRadius
+                                                               yRadius:kCornerRadius]];
+        clip.windingRule = NSWindingRuleEvenOdd;
+        [clip addClip];
+        NSShadow *shadow = [[NSShadow alloc] init];
+        shadow.shadowColor = color;
+        shadow.shadowBlurRadius = self.glow;
+        shadow.shadowOffset = NSZeroSize;
+        [shadow set];
+        [path stroke]; // two passes make the halo bright enough to read as a glow
+        [path stroke];
+        [NSGraphicsContext restoreGraphicsState];
+    }
     [path stroke];
 }
 @end
@@ -69,6 +95,7 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
 @property(nonatomic) NSUInteger paletteIndex;
 @property(nonatomic) CGFloat lineWidth;       // inactive windows
 @property(nonatomic) CGFloat activeLineWidth; // frontmost window
+@property(nonatomic, strong) NSDictionary<NSString *, NSNumber *> *glows; // app name -> glow radius
 @property(nonatomic) BOOL enabled;
 @property(nonatomic, copy) NSString *lastOrder;
 @end
@@ -171,6 +198,19 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
     NSDictionary *s = [obj isKindOfClass:[NSDictionary class]] ? obj : @{};
     self.lineWidth = [self widthFrom:s[@"width"] fallback:kDefaultLineWidth];
     self.activeLineWidth = [self widthFrom:s[@"activeWidth"] fallback:self.lineWidth];
+
+    // "glow": { "AppName": radius, ... } gives that app's border a soft halo.
+    NSMutableDictionary *glows = [NSMutableDictionary dictionary];
+    id g = s[@"glow"];
+    if ([g isKindOfClass:[NSDictionary class]]) {
+        for (id name in g) {
+            id v = g[name];
+            if (![name isKindOfClass:[NSString class]] || ![v isKindOfClass:[NSNumber class]]) continue;
+            CGFloat r = MIN(MAX([v doubleValue], 0.0), kMaxGlow);
+            if (r > 0) glows[name] = @(r);
+        }
+    }
+    self.glows = glows;
 }
 
 - (CGFloat)widthFrom:(id)value fallback:(CGFloat)fallback {
@@ -258,7 +298,8 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
         // CGWindowList is front-to-back, so the first window we keep is the active one.
         BOOL isFront = (order.count == 0);
         CGFloat lw = isFront ? self.activeLineWidth : self.lineWidth;
-        CGFloat outset = OutsetForWidth(lw);
+        CGFloat glow = self.glows[owner].doubleValue;
+        CGFloat outset = OutsetForWidth(lw) + glow;
         NSRect frame = NSMakeRect(bounds.origin.x - outset,
                                   primaryHeight - bounds.origin.y - bounds.size.height - outset,
                                   bounds.size.width + 2 * outset, bounds.size.height + 2 * outset);
@@ -291,6 +332,7 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
         NSColor *color = [self colorForApp:owner];
         if (![bv.color isEqual:color]) { bv.color = color; [bv setNeedsDisplay:YES]; }
         if (bv.lineWidth != lw) { bv.lineWidth = lw; [bv setNeedsDisplay:YES]; }
+        if (bv.glow != glow) { bv.glow = glow; [bv setNeedsDisplay:YES]; }
     }
 
     // Re-stack overlays above their windows whenever anything moved or the
