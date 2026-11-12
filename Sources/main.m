@@ -199,6 +199,12 @@ static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth
         NSColor *c = [self colorFromHex:hex];
         if (c) return c;
     }
+    // Optional "*" key: one color for every app not listed by name.
+    NSString *fallback = self.configColors[@"*"];
+    if (fallback) {
+        NSColor *c = [self colorFromHex:fallback];
+        if (c) return c;
+    }
     NSColor *existing = self.assigned[name];
     if (existing) return existing;
     NSColor *c = self.palette[self.paletteIndex % self.palette.count];

@@ -67,7 +67,9 @@ apps to specific colors, create `~/.config/window-border/colors.json`:
 ```
 
 Keys are the app names as macOS reports them; values are hex colors. Then pick
-**Reload Colors** from the menu. Apps not listed keep getting palette colors.
+**Reload Colors** from the menu. Apps not listed keep getting palette colors,
+unless you add a `"*"` key (for example `"*": "#8E8E93"`) to give every
+unlisted app the same color.
 
 ## Border thickness (optional)
 
