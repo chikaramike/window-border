@@ -69,6 +69,24 @@ apps to specific colors, create `~/.config/window-border/colors.json`:
 Keys are the app names as macOS reports them; values are hex colors. Then pick
 **Reload Colors** from the menu. Apps not listed keep getting palette colors.
 
+## Border thickness (optional)
+
+To make outlines thicker — or make the active window stand out — create
+`~/.config/window-border/settings.json`:
+
+```json
+{
+  "width": 1,
+  "activeWidth": 4
+}
+```
+
+- `width` — outline thickness for all windows, in points (default `1`).
+- `activeWidth` — thickness for the frontmost window (defaults to `width`).
+
+Values are capped at 20. Extra thickness grows outward from the window edge, so
+it never covers window content. Pick **Reload Colors** to apply changes.
+
 ## How it works
 
 - `CGWindowList` gives the on-screen windows, their bounds, and owning app.

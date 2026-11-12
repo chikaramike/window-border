@@ -9,14 +9,20 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <ServiceManagement/ServiceManagement.h>
 
-static const CGFloat kLineWidth = 1.0;
+static const CGFloat kDefaultLineWidth = 1.0;
+static const CGFloat kMaxLineWidth = 20.0;
 static const CGFloat kCornerRadius = 10.0;
 static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
+
+// The innermost 1pt of the outline sits on the window's edge (as it always
+// has); any extra thickness grows outward so thick borders don't cover content.
+static CGFloat OutsetForWidth(CGFloat w) { return MAX(0.0, w - kDefaultLineWidth); }
 
 #pragma mark - Border view
 
 @interface BorderView : NSView
 @property(nonatomic, strong) NSColor *color;
+@property(nonatomic) CGFloat lineWidth;
 @end
 
 @implementation BorderView
@@ -24,11 +30,13 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
 - (void)drawRect:(NSRect)dirtyRect {
     [[NSColor clearColor] set];
     NSRectFill(self.bounds);
-    NSRect r = NSInsetRect(self.bounds, kLineWidth / 2.0, kLineWidth / 2.0);
+    CGFloat lw = self.lineWidth > 0 ? self.lineWidth : kDefaultLineWidth;
+    CGFloat radius = kCornerRadius + OutsetForWidth(lw);
+    NSRect r = NSInsetRect(self.bounds, lw / 2.0, lw / 2.0);
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:r
-                                                        xRadius:kCornerRadius
-                                                        yRadius:kCornerRadius];
-    [path setLineWidth:kLineWidth];
+                                                        xRadius:radius
+                                                        yRadius:radius];
+    [path setLineWidth:lw];
     [(self.color ?: [NSColor systemRedColor]) set];
     [path stroke];
 }
@@ -59,6 +67,8 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
 @property(nonatomic, strong) NSDictionary<NSString *, NSString *> *configColors;
 @property(nonatomic, strong) NSArray<NSColor *> *palette;
 @property(nonatomic) NSUInteger paletteIndex;
+@property(nonatomic) CGFloat lineWidth;       // inactive windows
+@property(nonatomic) CGFloat activeLineWidth; // frontmost window
 @property(nonatomic) BOOL enabled;
 @property(nonatomic, copy) NSString *lastOrder;
 @end
@@ -76,6 +86,7 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
         [NSColor systemBrownColor], [NSColor systemCyanColor], [NSColor systemMintColor],
     ];
     [self loadConfig];
+    [self loadSettings];
     [self setupMenu];
 
     self.timer = [NSTimer scheduledTimerWithTimeInterval:kTick
@@ -130,6 +141,7 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
 
 - (void)reloadColors:(id)sender {
     [self loadConfig];
+    [self loadSettings];
     [self.assigned removeAllObjects];
     self.paletteIndex = 0;
 }
@@ -147,6 +159,25 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
     if (!data) { self.configColors = @{}; return; }
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     self.configColors = [obj isKindOfClass:[NSDictionary class]] ? obj : @{};
+}
+
+// Optional ~/.config/window-border/settings.json:
+//   { "width": 1, "activeWidth": 4 }
+// Both are in points; activeWidth defaults to width when omitted.
+- (void)loadSettings {
+    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@".config/window-border/settings.json"];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    NSDictionary *s = [obj isKindOfClass:[NSDictionary class]] ? obj : @{};
+    self.lineWidth = [self widthFrom:s[@"width"] fallback:kDefaultLineWidth];
+    self.activeLineWidth = [self widthFrom:s[@"activeWidth"] fallback:self.lineWidth];
+}
+
+- (CGFloat)widthFrom:(id)value fallback:(CGFloat)fallback {
+    if (![value isKindOfClass:[NSNumber class]]) return fallback;
+    CGFloat w = [value doubleValue];
+    if (w <= 0) return fallback;
+    return MIN(w, kMaxLineWidth);
 }
 
 - (NSColor *)colorFromHex:(NSString *)hex {
@@ -218,9 +249,13 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
         if (bounds.size.width < 80 || bounds.size.height < 60) continue; // skip tiny
 
         NSNumber *wid = w[(id)kCGWindowNumber];
-        NSRect frame = NSMakeRect(bounds.origin.x,
-                                  primaryHeight - bounds.origin.y - bounds.size.height,
-                                  bounds.size.width, bounds.size.height);
+        // CGWindowList is front-to-back, so the first window we keep is the active one.
+        BOOL isFront = (order.count == 0);
+        CGFloat lw = isFront ? self.activeLineWidth : self.lineWidth;
+        CGFloat outset = OutsetForWidth(lw);
+        NSRect frame = NSMakeRect(bounds.origin.x - outset,
+                                  primaryHeight - bounds.origin.y - bounds.size.height - outset,
+                                  bounds.size.width + 2 * outset, bounds.size.height + 2 * outset);
         [live addObject:wid];
         [order addObject:wid];
 
@@ -249,6 +284,7 @@ static const NSTimeInterval kTick = 1.0 / 60.0; // 60 Hz
         BorderView *bv = (BorderView *)ov.contentView;
         NSColor *color = [self colorForApp:owner];
         if (![bv.color isEqual:color]) { bv.color = color; [bv setNeedsDisplay:YES]; }
+        if (bv.lineWidth != lw) { bv.lineWidth = lw; [bv setNeedsDisplay:YES]; }
     }
 
     // Re-stack overlays above their windows whenever anything moved or the
